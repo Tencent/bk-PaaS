@@ -32,6 +32,7 @@ type DeployData struct {
 	AppCode      string                 `json:"app_code"`
 	Mode         string                 `json:"mode"`
 	Envs         map[string]interface{} `json:"envs"`
+	ISMaster     bool  					`json:"is_master"`
 	EventID      string                 `json:"event_id"`
 	DeployToken  string                 `json:"deploy_token"`
 	DeployVars   map[string]interface{} `json:"deploy_vars"`
@@ -76,6 +77,7 @@ func appJobHandler(c echo.Context, handle string) error {
 				AppCode:      jobData.AppCode,
 				Mode:         jobData.Mode,
 				Envs:         map[string]interface{}{"BK_VERSION": "2.0"},
+				ISMaster:     jobData.ISMaster,
 				EventID:      jobData.EventID,
 				DeployToken:  jobData.DeployToken,
 				DeployVars:   jobData.DeployVars,
@@ -88,6 +90,7 @@ func appJobHandler(c echo.Context, handle string) error {
 				AppCode:      jobData.AppCode,
 				Mode:         jobData.Mode,
 				Envs:         jobData.Envs,
+				ISMaster:     jobData.ISMaster,
 				EventID:      jobData.EventID,
 				DeployToken:  jobData.DeployToken,
 				DeployVars:   jobData.DeployVars,

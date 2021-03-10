@@ -5,7 +5,7 @@ Copyright (C) 2017-2018 THL A29 Limited, a Tencent company. All rights reserved.
 Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at
 http://opensource.org/licenses/MIT
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
-""" # noqa
+"""  # noqa
 import logging
 
 from django.views.generic import View
@@ -75,11 +75,6 @@ class AgentActiveViewSet(BaseView):
         except models.BkServer.DoesNotExist:
             return FailJsonResponse("id %s server not registered")
 
-        if not bk_server.is_active and has_active_server(bk_server.category):
-            return FailJsonResponse(
-                "%s environment has already one activated server, thus id %s cannot be activated again"
-                % (bk_server.category, server_id))
-
         try:
             resp = check_agent_health(bk_server)
             bk_server.is_active = True
@@ -119,6 +114,7 @@ class AppViewSet(AppView):
 
 
 class AppReleaseViewSet(AppView):
+
     def post(self, request, app_code, mode):
         try:
             bk_app = models.BkApp.objects.get(app_code=app_code)
@@ -163,13 +159,43 @@ class AppReleaseViewSet(AppView):
 
 
 class AppLogsViewSet(AppView):
+
     def get(self, request, app_code, event_id):
         try:
-            bk_app = models.BkApp.objects.get(app_code=app_code)
-            bk_app_event = models.BkAppEvent.objects.get(id=event_id, bk_app=bk_app)
+            father_event = models.BkEvent.objects.get(id=event_id)
         except Exception, e:
-            return FailJsonResponse(str(e))
-        return OKJsonResponse(data=bk_app_event.serializer_data())
+            return FailJsonResponse(u"Get BkEvent failed: %s" % e)
+
+        # 主服务器操作日志
+        try:
+            master_bk_app_event = models.BkAppEvent.objects.get(bk_event_id=event_id, is_master=True)
+        except models.BkAppEvent.DoesNotExist as e:
+            return FailJsonResponse(u"Get Master log failed: %s, event_id: %s" % (e, event_id))
+        log_content = master_bk_app_event.logs
+
+        # 判断从服务器是否存在错误日志
+        failed_slave_bk_app_events = models.BkAppEvent.objects.filter(bk_event_id=event_id, is_master=False,
+                                                                      status="FAILURE")
+        for failed_slave_bk_app_event in failed_slave_bk_app_events:
+            log_content += u"\n\nWarning: Slave-Node failed, app_event_id: %s" \
+                           u"Slave-node log: %s" % (failed_slave_bk_app_event.id,
+                                                    failed_slave_bk_app_event.logs)
+
+        # 主服务器已完成，从服务器未完成
+        if master_bk_app_event.status == "SUCCESS":
+            if father_event.status == "SUCCESS":
+                log_content += u"All Nodes success..."
+            else:
+                log_content += u"Waitting other Node..."
+
+        return OKJsonResponse(
+            data={
+                "status": father_event.status,
+                "logs": log_content,
+                "event_type": father_event.event_type,
+                "app_code": app_code
+            }
+        )
 
 
 class AppEventLogsViewSet(AgentView):
@@ -178,6 +204,7 @@ class AppEventLogsViewSet(AgentView):
         try:
             bk_app = models.BkApp.objects.get(app_code=app_code)
             bk_app_event = models.BkAppEvent.objects.get(id=event_id, bk_app=bk_app)
+            father_event_id = bk_app_event.bk_event_id
         except Exception, e:
             return FailJsonResponse(str(e))
 
@@ -189,6 +216,22 @@ class AppEventLogsViewSet(AgentView):
         data = form_data.clean()
         bk_app_event.status = data["status"]
         bk_app_event.save()
+
+        # 更新事件日志状态
+        if data["status"] == "SUCCESS":
+            father_event = models.BkEvent.objects.get(id=father_event_id)
+            bk_app_event_status_list = models.BkAppEvent.objects.filter(
+                bk_event_id=father_event_id).values_list("status", flat=True)
+
+            # 所有APP事件日志状态都为成功
+            if len(filter(lambda x: x != "SUCCESS", bk_app_event_status_list)) == 0:
+                father_event.status = "SUCCESS"
+                father_event.save()
+
+        elif data["status"] == "FAILURE":
+            father_event = models.BkEvent.objects.get(id=father_event_id)
+            father_event.status = "FAILURE"
+            father_event.save()
 
         models.BkAppEventLog.objects.create(bk_app_event=bk_app_event, log=data["log"])
 
